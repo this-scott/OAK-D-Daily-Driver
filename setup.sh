@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 set -euo pipefail
 
 
@@ -24,7 +24,7 @@ if ! modinfo v4l2loopback &>/dev/null; then
 fi
 
 
-echo "==> Persisting module config"
+echo "==> Module config applied to all v4l2loopback devices"
 echo "v4l2loopback" | sudo tee /etc/modules-load.d/${APP_NAME}.conf >/dev/null
 sudo tee /etc/modprobe.d/${APP_NAME}.conf >/dev/null <<EOF
 options v4l2loopback devices=0 exclusive_caps=1
@@ -48,13 +48,14 @@ EOF
 
 # OPTING TO HANDLE LOOPBACK DEVICE CLEANUP INSIDE THE BRIDGE SCRIPT ON SHUTDOWN
  
+# TODO: if the device creation is moved into the controller then script exe directly instead of start bridge
 echo "==> Installing systemd service"
 sudo tee /etc/systemd/system/${APP_NAME}.service >/dev/null <<EOF
 [Unit]
 Description=MyriadX virtual camera bridge
 
 [Service]
-Type=simple 
+Type=simple
 ExecStart=${PREFIX}/bin/start_bridge.sh
 EOF
 

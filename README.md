@@ -26,4 +26,7 @@ modprobe v4l2loopback video_nr=<N> card_label="Oak-D Camera" width=1920 height=1
 - This program applies a module level setting, exclusive_caps=1 which is common for web programs like Chrome and Discord to recognize it as a webcam device. If your current setup uses v4l2loopback ensure that it doesn't require this parameter set to something else.
 
 Problem: Plugging in the device will start the script, automatically starting the camera. Need to set it up to either start the camera pipeline or start the script when an app (discord, chrome, etc...) calls the camera
-**Solution: We're moving to pipewire**
+**~~Solution: We're moving to pipewire~~**
+    *Pipewire only allows us talk to device which read from the pipewire service*
+
+**We're moving to the loopback library**
