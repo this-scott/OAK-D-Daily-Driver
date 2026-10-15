@@ -29,7 +29,11 @@ int dai_run() {
   cfg.announce_all_caps = 0; //exclusive_caps=1, for device recognition
   //device number
   int ctl = open("/dev/v4l2loopback", O_RDWR); 
+  if (ctl < 0)
+    perror("open ctl");
   int nr=ioctl(ctl, V4L2LOOPBACK_CTL_ADD, &cfg); //creates /dev/video<nr>
+  if (nr < 0)
+    perror("CTL_ADD");
   if (nr < 0) return -1;
 
   //declaring video device path
@@ -47,7 +51,12 @@ int dai_run() {
   fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_YUV420;
   fmt.fmt.pix.sizeimage = 1920*1080*3/2;
   ioctl(fd, VIDIOC_S_FMT, &fmt);
-
+  
+  //write a blank frame to advertise as a capture device
+  std::vector<uint8_t> blank(1920*1080*3/2, 128);   // U/V = 128 (neutral)
+  std::fill_n(blank.begin(), 1920*1080, 0);         // Y = 0 → black
+  write(fd, blank.data(), blank.size());
+  
   // creating event listener for fd streams
   // sub is reuseable
   v4l2_event_subscription sub{};
@@ -106,5 +115,6 @@ int dai_run() {
       }
     }
   }
-    return 0;
+  ioctl(ctl, V4L2LOOPBACK_CTL_REMOVE, nr);
+  return 0;
 }
