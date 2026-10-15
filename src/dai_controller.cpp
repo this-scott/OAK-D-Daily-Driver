@@ -49,46 +49,62 @@ int dai_run() {
   ioctl(fd, VIDIOC_S_FMT, &fmt);
 
   // creating event listener for fd streams
+  // sub is reuseable
   v4l2_event_subscription sub{};
-
   sub.type = V4L2_EVENT_PRI_CLIENT_USAGE;
+  // the actual subscriber
   ioctl(fd, VIDIOC_SUBSCRIBE_EVENT, &sub);
-
-  // poll/listener for the event to change
-  pollfd p{fd, POLLPRI, 0};
-  if (poll(&p, 1, timeout) > 0) {
-    v4l2_event ev{};
-    ioctl(fd, VIDIOC_DQEVENT, &ev);
-  }
-
-  // 3. CREATING THE DAI STREAM
-  // Shared ptr automatically destroys itself when it has no more references. In this case when the function ends
-  std::shared_ptr<dai::Device> device = std::make_shared<dai::Device>();
-
-  // Create Pipeline
-  dai::Pipeline pipeline(device);
-
-  //Create camera node
-  auto cam = pipeline.create<dai::node::Camera>() -> build(dai::CameraBoardSocket::CAM_A);
-  
-  // Creating the camera stream. DAI auto-outputs to 420p
-  std::shared_ptr<dai::MessageQueue> videoQueue = cam->requestOutput({1920,1080}, dai::ImgFrame::Type::YUV420p, dai::ImgResizeMode::STRETCH,30)->createOutputQueue(8,false);
-
-  pipeline.start();
-  
-
-
+  // EVENT LOOP
   while (true) {
-    //get image frame
-    std::shared_ptr<dai::ImgFrame> videoIn=videoQueue->get<dai::ImgFrame>();
-    if (videoIn == nullptr)
-      continue;
+    
 
-    //auto is creating a copy of the object
-    auto data = videoIn->getData();
+    // poll/listener for the event(an application subscribes) to change
+    pollfd p{fd, POLLPRI, 0};
+    if (poll(&p, 1, -1) > 0 && (p.revents & POLLPRI)) {
+      // clear just occured event
+      v4l2_event ev{}; // event data
+      ioctl(fd, VIDIOC_DQEVENT, &ev);
+      
+      v4l2_event_client_usage u;
+      memcpy(&u, ev.u.data, sizeof(u));
+      int count = u.count;
+      if (count > 0) {
 
-    //writing buffer to stream
-    write(fd, data.data(), 1920*1080*3/2);
+        // 3. CREATING THE DAI STREAM
+        // Shared ptr automatically destroys itself when it has no more references. In this case when the function ends
+        std::shared_ptr<dai::Device> device = std::make_shared<dai::Device>();
+
+        // Create Pipeline
+        dai::Pipeline pipeline(device);
+
+        //Create camera node
+        auto cam = pipeline.create<dai::node::Camera>() -> build(dai::CameraBoardSocket::CAM_A);
+        
+        // Creating the camera stream. DAI auto-outputs to 420p
+        std::shared_ptr<dai::MessageQueue> videoQueue = cam->requestOutput({1920,1080}, dai::ImgFrame::Type::YUV420p, dai::ImgResizeMode::STRETCH,30)->createOutputQueue(8,false);
+
+        pipeline.start();
+
+        while (count > 0) {
+          //get image frame
+          std::shared_ptr<dai::ImgFrame> videoIn=videoQueue->get<dai::ImgFrame>();
+          if (videoIn != nullptr) {
+            //auto is creating a copy of the object
+            auto data = videoIn->getData();
+            //writing buffer to stream
+            write(fd, data.data(), 1920*1080*3/2);
+          }
+
+          // polling for the subscriber count again
+          if (poll(&p, 1, 0) > 0 && (p.revents & POLLPRI)) {
+            ioctl(fd, VIDIOC_DQEVENT, &ev);
+            memcpy(&u, ev.u.data, sizeof(u));
+            count = u.count;
+          }
+        }
+        pipeline.stop();
+      }
+    }
   }
-  return 0;
+    return 0;
 }
