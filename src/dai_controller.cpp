@@ -6,6 +6,9 @@
 #include <linux/videodev2.h> //v4l2 format commands
 #include <linux/v4l2loopback.h>
 #include <poll.h>
+#include <signal.h>
+
+volatile sig_atomic_t stop = 0;
 
 // api events copied out of v4l2loopback.c source
 // this is the listener event for when an app begins streaming from the camera device
@@ -19,6 +22,10 @@ struct v4l2_event_client_usage {
 // Create the camera device, get the image, stream it to the device
 // I would love to seperate the v4l2 device and dai pipeline but there's not much reason too
 int dai_run() {
+  // PRE. sigaction to handle ctrl+c
+  struct sigaction sa{}; 
+  sa.sa_handler = [](int){ stop = 1; };
+  sigaction(SIGINT, &sa, nullptr);
 
   // 1. CREATING THE DEVICE
 
@@ -64,7 +71,7 @@ int dai_run() {
   // the actual subscriber
   ioctl(fd, VIDIOC_SUBSCRIBE_EVENT, &sub);
   // EVENT LOOP
-  while (true) {
+  while (!stop) {
     
 
     // poll/listener for the event(an application subscribes) to change
@@ -94,9 +101,10 @@ int dai_run() {
 
         pipeline.start();
 
-        while (count > 0) {
-          //get image frame
-          std::shared_ptr<dai::ImgFrame> videoIn=videoQueue->get<dai::ImgFrame>();
+        while (count > 0 && !stop) {
+          //get image frame, including a timeout for cpu safety
+          bool timedOut;
+          std::shared_ptr<dai::ImgFrame> videoIn=videoQueue->get<dai::ImgFrame>(std::chrono::milliseconds(100),timedOut);
           if (videoIn != nullptr) {
             //auto is creating a copy of the object
             auto data = videoIn->getData();
@@ -115,6 +123,8 @@ int dai_run() {
       }
     }
   }
+  close(fd);
   ioctl(ctl, V4L2LOOPBACK_CTL_REMOVE, nr);
+  close(ctl);
   return 0;
 }
