@@ -51,7 +51,7 @@ set_target_properties(${TARGET_NAME} PROPERTIES INSTALL_RPATH "$ORIGIN/../lib/oa
 
 # Cpack package details
 set(CPACK_GENERATOR DEB)
-set(CPACK_PACKAGE_NAME oakd_webcam)
+set(CPACK_PACKAGE_NAME oakd-webcam)
 set(CPACK_PACKAGE_VERSION 0.6.0)
 set(CPACK_PACKAGE_CONTACT "Scott Styslinger <this_scott@outlook.com>")
 set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)

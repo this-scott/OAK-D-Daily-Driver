@@ -1,0 +1,7 @@
+#!/bin/sh
+set -e
+udevadm control --reload-rules || true
+systemctl daemon-reload || true
+
+# post install script. Reloads udev and systemctl with the rules created via installation
+# fails the entire installation if one of these commands fails so added || true makes failure safe
