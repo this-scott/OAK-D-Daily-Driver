@@ -26,6 +26,7 @@ int dai_run() {
   struct sigaction sa{}; 
   sa.sa_handler = [](int){ stop = 1; };
   sigaction(SIGINT, &sa, nullptr);
+  sigaction(SIGTERM, &sa, nullptr);
 
   // 1. CREATING THE DEVICE
 
@@ -34,14 +35,20 @@ int dai_run() {
   cfg.output_nr = -1; // sets the device number, -1 is autofill
   strncpy(cfg.card_label, "Oak-D Camera", sizeof(cfg.card_label)-1);
   cfg.announce_all_caps = 0; //exclusive_caps=1, for device recognition
-  //device number
+
+  //get v4l2loopback module controller
   int ctl = open("/dev/v4l2loopback", O_RDWR); 
-  if (ctl < 0)
+  if (ctl < 0) {
     perror("open ctl");
+    return -1;
+  }
+
   int nr=ioctl(ctl, V4L2LOOPBACK_CTL_ADD, &cfg); //creates /dev/video<nr>
-  if (nr < 0)
-    perror("CTL_ADD");
-  if (nr < 0) return -1;
+  if (nr < 0) {
+    perror("CTL_ADD"); //I should switch these to cout but I'm lazy
+    close(ctl);
+    return -1;
+  }
 
   //declaring video device path
   char path[32];
@@ -49,7 +56,16 @@ int dai_run() {
 
   // 2. CREATING A FILE DESCRIPTOR FOR THE DEVICE
   int fd = open(path, O_RDWR);
-  
+  if (fd == -1) {
+    std::cout << "Error opening file descriptor" << std::endl;
+    ioctl(ctl, V4L2LOOPBACK_CTL_REMOVE, nr);
+    close(ctl);
+    return -1;
+  }
+  // cleanup lambda function for closeout
+  // using a lambda instead of a regular function because it holds references to the exact 
+  auto cleanup = [&]{if (fd >= 0) close(fd); ioctl(ctl, V4L2LOOPBACK_CTL_REMOVE, nr); close(ctl);};
+
   // setting image format
   v4l2_format fmt{};
   fmt.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
@@ -57,74 +73,101 @@ int dai_run() {
   fmt.fmt.pix.height = 1080;
   fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_YUV420;
   fmt.fmt.pix.sizeimage = 1920*1080*3/2;
-  ioctl(fd, VIDIOC_S_FMT, &fmt);
-  
+  if (ioctl(fd, VIDIOC_S_FMT, &fmt) < 0) {
+    std::cout << "Failed to set video format" << std::endl;
+    cleanup();
+    return -1;
+  }
   //write a blank frame to advertise as a capture device
   std::vector<uint8_t> blank(1920*1080*3/2, 128);   // U/V = 128 (neutral)
   std::fill_n(blank.begin(), 1920*1080, 0);         // Y = 0 → black
   write(fd, blank.data(), blank.size());
-  
+
   // creating event listener for fd streams
   // sub is reuseable
   v4l2_event_subscription sub{};
   sub.type = V4L2_EVENT_PRI_CLIENT_USAGE;
   // the actual subscriber
-  ioctl(fd, VIDIOC_SUBSCRIBE_EVENT, &sub);
+  if (ioctl(fd, VIDIOC_SUBSCRIBE_EVENT, &sub) < 0) {
+    std::cout << "Failed to subscribe to V4L2_EVENT_PRI_CLIENT_USAGE" << std::endl;
+    cleanup();
+    return -1;
+  }
+
   // EVENT LOOP
   while (!stop) {
-    
 
     // poll/listener for the event(an application subscribes) to change
     pollfd p{fd, POLLPRI, 0};
-    if (poll(&p, 1, -1) > 0 && (p.revents & POLLPRI)) {
+    int scan = poll(&p, 1, 1000);
+
+    // checks if there is any existing dai device over 5 seconds... if there is none flags stop
+    if (scan == 0) {
+      if (!std::get<0>(dai::Device::getAnyAvailableDevice(std::chrono::seconds(5)))) {stop = 1;}
+      continue;
+    }
+    else if (scan > 0 && (p.revents & POLLPRI)) {
       // clear just occured event
       v4l2_event ev{}; // event data
-      ioctl(fd, VIDIOC_DQEVENT, &ev);
-      
+      if (ioctl(fd, VIDIOC_DQEVENT, &ev) < 0) {
+        std::cout << "Failed to pop latest video event" << std::endl;
+        cleanup();
+        return -1;
+      }
+
       v4l2_event_client_usage u;
       memcpy(&u, ev.u.data, sizeof(u));
       int count = u.count;
       if (count > 0) {
+        try {
+          // 3. CREATING THE DAI STREAM
+          // Shared ptr automatically destroys itself when it has no more references. In this case when the function ends
+          std::shared_ptr<dai::Device> device = std::make_shared<dai::Device>();
 
-        // 3. CREATING THE DAI STREAM
-        // Shared ptr automatically destroys itself when it has no more references. In this case when the function ends
-        std::shared_ptr<dai::Device> device = std::make_shared<dai::Device>();
+          // Create Pipeline
+          dai::Pipeline pipeline(device);
 
-        // Create Pipeline
-        dai::Pipeline pipeline(device);
+          //Create camera node
+          auto cam = pipeline.create<dai::node::Camera>() -> build(dai::CameraBoardSocket::CAM_A);
 
-        //Create camera node
-        auto cam = pipeline.create<dai::node::Camera>() -> build(dai::CameraBoardSocket::CAM_A);
-        
-        // Creating the camera stream. DAI auto-outputs to 420p
-        std::shared_ptr<dai::MessageQueue> videoQueue = cam->requestOutput({1920,1080}, dai::ImgFrame::Type::YUV420p, dai::ImgResizeMode::STRETCH,30)->createOutputQueue(8,false);
+          // Creating the camera stream. DAI auto-outputs to 420p
+          std::shared_ptr<dai::MessageQueue> videoQueue = cam->requestOutput({1920,1080}, dai::ImgFrame::Type::YUV420p, dai::ImgResizeMode::STRETCH,30)->createOutputQueue(8,false);
 
-        pipeline.start();
+          pipeline.start();
 
-        while (count > 0 && !stop) {
-          //get image frame, including a timeout for cpu safety
-          bool timedOut;
-          std::shared_ptr<dai::ImgFrame> videoIn=videoQueue->get<dai::ImgFrame>(std::chrono::milliseconds(100),timedOut);
-          if (videoIn != nullptr) {
-            //auto is creating a copy of the object
-            auto data = videoIn->getData();
-            //writing buffer to stream
-            write(fd, data.data(), 1920*1080*3/2);
+          while (count > 0 && !stop) {
+            //get image frame, including a timeout for cpu safety
+            bool timedOut;
+            std::shared_ptr<dai::ImgFrame> videoIn=videoQueue->get<dai::ImgFrame>(std::chrono::milliseconds(100),timedOut);
+            if (videoIn != nullptr) {
+              //auto is creating a copy of the object
+              auto data = videoIn->getData();
+              //writing buffer to stream
+              write(fd, data.data(), 1920*1080*3/2);
+            }
+
+            // polling for the subscriber count again
+            if (poll(&p, 1, 0) > 0 && (p.revents & POLLPRI)) {
+              ioctl(fd, VIDIOC_DQEVENT, &ev);
+              memcpy(&u, ev.u.data, sizeof(u));
+              count = u.count;
+            } 
+
           }
-
-          // polling for the subscriber count again
-          if (poll(&p, 1, 0) > 0 && (p.revents & POLLPRI)) {
-            ioctl(fd, VIDIOC_DQEVENT, &ev);
-            memcpy(&u, ev.u.data, sizeof(u));
-            count = u.count;
-          }
+          pipeline.stop();
         }
-        pipeline.stop();
+        // std exceptions catch depthai error
+        catch(const std::exception& e) {
+          std::cout << "Stream error: " << e.what() << std::endl;
+          stop = 1;
+        }
+        catch(...) {
+          std::cout << "Stream error: unknown" << std::endl;
+          stop = 1;
+        }
       }
     }
   }
-  close(fd);
-  ioctl(ctl, V4L2LOOPBACK_CTL_REMOVE, nr);
-  close(ctl);
+  cleanup();
   return 0;
 }

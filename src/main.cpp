@@ -8,5 +8,5 @@ int main(int argc, char* argv[]) {
   int res = dai_run();
   std::cout << "Camera exit with code " << res << std::endl;
 
-  return 0;
+  return res;
 }
