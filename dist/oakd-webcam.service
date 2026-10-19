@@ -1,0 +1,6 @@
+[Unit]
+Description=Webcam driver for OakD depthai 3 cameras
+
+[Service]
+ExecStartPre=/sbin/modprobe v4l2loopback
+ExecStart=/usr/bin/OakDWebcam
