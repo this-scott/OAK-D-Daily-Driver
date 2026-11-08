@@ -52,10 +52,10 @@ set_target_properties(${TARGET_NAME} PROPERTIES INSTALL_RPATH "$ORIGIN/../lib/oa
 # Cpack package details
 set(CPACK_GENERATOR DEB)
 set(CPACK_PACKAGE_NAME oakd-webcam)
-set(CPACK_PACKAGE_VERSION 0.6.0)
+set(CPACK_PACKAGE_VERSION 0.1.1)
 set(CPACK_PACKAGE_CONTACT "Scott Styslinger <this_scott@outlook.com>")
 set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
-set(CPACK_DEBIAN_PACKAGE_DEPENDS "v4l2loopback-dkms (>= 0.13.0)")
+set(CPACK_DEBIAN_PACKAGE_DEPENDS "v4l2loopback-modules | v4l2loopback-dkms (>= 0.13.0)")
 # calculates shared file dependencies
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
 set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA "${CMAKE_SOURCE_DIR}/dist/postinst")

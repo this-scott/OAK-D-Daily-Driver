@@ -42,5 +42,5 @@ systemctl daemon-reload
 ```
 **Requires**
 - [depthai-core](https://github.com/luxonis/depthai-core/tree/main)
-- v4l2loopback version >= 13.0.0 `apt install v4l2loopback-dkms`
+- v4l2loopback version >= 13.0.0 `apt install v4l2loopback-module`
 - cmake `apt install cmake`
